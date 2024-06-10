@@ -111,13 +111,13 @@ namespace GatherBuddy.AutoGather
             {
                 if (CurrentDestination == null)
                     return;
+                if (IsPathGenerating)
+                {
+                    return;
+                }
 
                 if (!IsCloseToDestination())
                 {
-                    if (IsPathGenerating)
-                    {
-                        return;
-                    }
 
                     // Check if character is stuck
                     if (lastPosition.HasValue && Vector3.Distance(Player.Object.Position, lastPosition.Value) < 2.0f)
