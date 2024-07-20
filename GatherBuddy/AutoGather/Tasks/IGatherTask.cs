@@ -8,8 +8,8 @@ namespace GatherBuddy.AutoGather.Tasks;
 
 public interface IGatherTask
 {
-    public IEnumerable<IGatherable> DesiredGatherables { get; }
+    public IEnumerable<Gatherable> DesiredGatherables { get; }
     public ILocation                Location           { get; }
     public GatheringType            GatheringType      { get; }
-    public IEnumerable<IGatherable> IncompleteGatherables { get; }
+    public IEnumerable<Gatherable> IncompleteGatherables { get; }
 }

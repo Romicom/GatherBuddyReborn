@@ -13,7 +13,7 @@ public partial class AutoGather
 {
     public List<IGatherTask> GatherTasks = [];
 
-    public List<IGatherTask> OrderedTasks = GatherTasks.OrderBy(t => t.Location).ThenBy(t => t.GatheringType).ToList();
+    public List<IGatherTask> OrderedTasks => GatherTasks.OrderBy(t => t.Location).ThenBy(t => t.GatheringType).ToList();
     public void BuildTaskList()
     {
         GatherTasks.Clear();
@@ -21,9 +21,15 @@ public partial class AutoGather
         var items = _plugin.GatherWindowManager.ActiveItems;
         foreach (var item in items)
         {
+            if (item is not Gatherable gatherable)
+            {
+                Communicator.PrintError("Fuck you fish");
+                return;
+            }
+            
             if (GatherBuddy.UptimeManager.TimedGatherables.Contains(item))
             {
-                //TODO: Handle Timed Nodes Separately
+                
                 return;
             }
             var location = _plugin.Executor.FindClosestLocation(item);
@@ -33,17 +39,17 @@ public partial class AutoGather
                 return;
             }
 
-            var gatheringType = DetermineGatheringType(item);
+            var gatheringType = DetermineGatheringType(gatherable);
             var existingTask  = GatherTasks.FirstOrDefault(t => t.Location == location && t.GatheringType == gatheringType);
             if (existingTask == null)
             {
-                var list = new List<IGatherable>();
-                list.Add(item);
+                var list = new List<Gatherable>();
+                list.Add(gatherable);
                 GatherTasks.Add(new GatherTask(list, location, gatheringType));
             }
             else
             {
-                existingTask.DesiredGatherables.Add(item);
+                existingTask.DesiredGatherables.Append(gatherable);
             }
         }
     }

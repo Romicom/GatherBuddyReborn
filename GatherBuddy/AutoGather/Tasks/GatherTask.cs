@@ -10,17 +10,17 @@ namespace GatherBuddy.AutoGather.Tasks;
 
 public class GatherTask : IGatherTask
 {
-    public GatherTask(List<IGatherable> items, ILocation location, GatheringType type)
+    public GatherTask(List<Gatherable> items, ILocation location, GatheringType type)
     {
         DesiredGatherables = items;
         Location           = location;
         GatheringType      = type;
     }
 
-    public IEnumerable<IGatherable> DesiredGatherables { get; }
+    public IEnumerable<Gatherable> DesiredGatherables { get; }
     public ILocation                Location           { get; }
     public GatheringType            GatheringType      { get; }
     
-    public IEnumerable<IGatherable> IncompleteGatherables
+    public IEnumerable<Gatherable> IncompleteGatherables
         => DesiredGatherables.Where(g => g.InventoryCount < g.Quantity);
 }
