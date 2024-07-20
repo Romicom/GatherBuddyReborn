@@ -34,6 +34,12 @@
 
   <ItemGroup>
     <None Remove="CustomInfo\world_locations.json" />
+    <Compile Remove="AutoGather\AutoGather.Movement.cs" />
+    <None Include="AutoGather\AutoGather.Movement.cs" />
+    <Compile Remove="AutoGather\AutoGather.Gather.cs" />
+    <None Include="AutoGather\AutoGather.Gather.cs" />
+    <Compile Remove="AutoGather\AutoGather.Actions.cs" />
+    <None Include="AutoGather\AutoGather.Actions.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -77,10 +83,6 @@
 	  <ProjectReference Include="..\ECommons\ECommons\ECommons.csproj" />
 	  <ProjectReference Include="..\GatherBuddy.GameData\GatherBuddy.GameData.csproj" />
 	  <ProjectReference Include="..\OtterGui\OtterGui.csproj" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Folder Include="AutoGather\Tasks\" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -65,12 +65,6 @@ namespace GatherBuddy.AutoGather
                     : "Failed (If you're seeing this you probably need to restart your game)"
                 : "None";
             ImGui.Text($"Navigation: {lastNavString}");
-            if (GatherBuddy.AutoGather.ItemsToGatherInZone.Count() > 1)
-            {
-                using var color = ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.DalamudRed);
-                ImGui.Text($"WARNING: There is more than 1 desired item in the zone. GBR may behave unexpectedly.");
-                color.Pop();
-            }
         }
 
 
@@ -98,7 +92,7 @@ namespace GatherBuddy.AutoGather
                     ImGui.TableSetColumnIndex(1);
                     ImGui.Text(node.IsTargetable ? "Y" : "N");
                     ImGui.TableSetColumnIndex(2);
-                    ImGui.Text(GatherBuddy.AutoGather.IsDesiredNode(node) ? "Y" : "N");
+                    ImGui.Text("Honk");
                     ImGui.TableSetColumnIndex(3);
                     ImGui.Text(node.Position.ToString());
                     ImGui.TableSetColumnIndex(4);

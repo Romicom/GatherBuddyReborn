@@ -10,6 +10,7 @@ using Dalamud.Game;
 using ECommons.DalamudServices;
 using GatherBuddy.Classes;
 using GatherBuddy.CustomInfo;
+using GatherBuddy.Enums;
 using GatherBuddy.Levenshtein;
 using GatherBuddy.Plugin;
 using GatherBuddy.Structs;
@@ -580,7 +581,6 @@ public partial class Interface
         ImGui.Text($"Enabled: {GatherBuddy.AutoGather.Enabled}");
         ImGui.Text($"Status: {GatherBuddy.AutoGather.AutoStatus}");
         ImGui.Text($"Navigation: {GatherBuddy.AutoGather.LastNavigationResult}");
-        ImGui.Text($"Target Node: {GatherBuddy.AutoGather.NearestNode?.Name} {GatherBuddy.AutoGather.NearestNode?.Position}");
         ImGui.Text($"Current Destination: {GatherBuddy.AutoGather.CurrentDestination}");
         ImGui.Text($"ShouldFly: {GatherBuddy.AutoGather.ShouldFly}");
         ImGui.Text($"IsGathering: {GatherBuddy.AutoGather.IsGathering}");
@@ -588,33 +588,26 @@ public partial class Interface
         ImGui.Text($"IsPathGenerating: {GatherBuddy.AutoGather.IsPathGenerating}");
         ImGui.Text($"NavReady: {GatherBuddy.AutoGather.NavReady}");
         ImGui.Text($"CanAct: {GatherBuddy.AutoGather.CanAct}");
-        ImGui.Text($"NearestNodeDistance: {GatherBuddy.AutoGather.NearestNodeDistance}");
-        ImGui.Text($"DesiredNodesInZone: {GatherBuddy.AutoGather.DesiredNodesInZone.Count}");
-        ImGui.Text($"DesiredNodeCoordsInZone: {GatherBuddy.AutoGather.DesiredNodeCoordsInZone.Count}");
-        ImGui.Text($"ValidNodesInRange: {GatherBuddy.AutoGather.ValidNodesInRange.Count()}");
         ImGui.Text($"BlacklistedNodes: {GatherBuddy.Config.AutoGatherConfig.BlacklistedNodesByTerritoryId.Count}");
-        ImGui.Text($"ItemsToGatherInZone: {GatherBuddy.AutoGather.ItemsToGatherInZone.Count()}");
-        ImGui.Text($"ItemsToGather: {GatherBuddy.AutoGather.ItemsToGather.Count()}");
+
         ImGui.Text($"ShouldUseFlag: {GatherBuddy.AutoGather.ShouldUseFlag}");
         ImGui.Text(($"HasSeenFlag: {GatherBuddy.AutoGather.HasSeenFlag}"));
         ImGui.Text($"LastIntegrity: {GatherBuddy.AutoGather.LastIntegrity}");
         ImGui.Text($"LastCollectScore: {GatherBuddy.AutoGather.LastCollectability}");
-        
-        if (ImGui.CollapsingHeader("Item Priority (Current Zone)"))
-        {
-            for (int i = 0; i < GatherBuddy.AutoGather.ItemsToGatherInZone.Count(); i++)
-            {
-                var item = GatherBuddy.AutoGather.ItemsToGatherInZone.ElementAt(i);
-                ImGui.Text($"{item.Name} - Priority {i}");
-            }
-        }
 
-        if (ImGui.CollapsingHeader("Item Priority (All)"))
+        if (ImGui.CollapsingHeader("Gather Tasks"))
         {
-            for (int i = 0; i < GatherBuddy.AutoGather.ItemsToGather.Count(); i++)
+            foreach (var task in GatherBuddy.AutoGather.GatherTasks)
             {
-                var item = GatherBuddy.AutoGather.ItemsToGather.ElementAt(i);
-                ImGui.Text($"{item.Name} - Priority {i}");
+                string gatherablesString = "";
+                foreach (var gatherable in task.DesiredGatherables)
+                {
+                    gatherablesString += gatherable.Name[GatherBuddy.Language] + ", ";
+                }
+                ImGui.Text($"Gatherables: {gatherablesString}");
+                ImGui.Text($"Location: {task.Location.Name}");
+                ImGui.Text($"Type: {task.GatheringType}");
+                ImGui.Separator();
             }
         }
 

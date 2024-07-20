@@ -35,7 +35,7 @@ namespace GatherBuddy.AutoGather
                 if (!value)
                 {
                     //Do Reset Tasks
-                    var gatheringMasterpiece = (AddonGatheringMasterpiece*)Dalamud.GameGui.GetAddonByName("GatheringMasterpiece", 1);
+                    var gatheringMasterpiece = MasterpieceAddon;
                     if (gatheringMasterpiece != null && !gatheringMasterpiece->AtkUnitBase.IsVisible)
                     {
                         gatheringMasterpiece->AtkUnitBase.IsVisible = true;
@@ -47,16 +47,21 @@ namespace GatherBuddy.AutoGather
                     }
 
                     TaskManager.Abort();
+                    GatherTasks.Clear();
                     HasSeenFlag    = false;
-                    HiddenRevealed = false;
                     AutoStatus     = "Idle...";
+                }
+
+                if (value)
+                {
+                    BuildTaskList();
                 }
 
                 _enabled = value;
             }
         }
 
-        public unsafe void DoAutoGather()
+        public void DoAutoGather()
         {
             if (!Enabled)
             {
@@ -85,7 +90,7 @@ namespace GatherBuddy.AutoGather
                 return;
             }
 
-            if (!_plugin.GatherWindowManager.ActiveItems.Any(i => i.InventoryCount < i.Quantity))
+            if (GatherTasks.Count < 1)
             {
                 AutoStatus         = "No items to gather...";
                 Enabled            = false;
@@ -100,60 +105,14 @@ namespace GatherBuddy.AutoGather
                 return;
             }
 
-            if (IsGathering)
+            var task = OrderedTasks.FirstOrDefault();
+            if (task == null)
             {
-                AutoStatus = "Gathering...";
-                TaskManager.Enqueue(VNavmesh_IPCSubscriber.Path_Stop);
-                TaskManager.Enqueue(DoActionTasks);
+                Enabled = false;
+                Communicator.PrintError("Nothing to auto-gather");
                 return;
             }
-
-            if (IsPathGenerating)
-            {
-                AutoStatus = "Generating path...";
-                return;
-            }
-
-            if (IsPathing)
-            {
-                StuckCheck();
-            }
-
-            var location = _plugin.Executor.FindClosestLocation(ItemsToGather.FirstOrDefault());
-            if (location == null)
-            {
-                AutoStatus = "No locations to travel to ...";
-                return;
-            }
-
-            if (ValidNodesInRange.Any())
-            {
-                HiddenRevealed = false;
-                TaskManager.Enqueue(MoveToCloseNode);
-                return;
-            }
-
-            if (location.Territory.Id != Dalamud.ClientState.TerritoryType || location.GatheringType.ToGroup() != JobAsGatheringType)
-            {
-                AutoStatus  = $"Moving to gather item in {location.Territory.Name}...";
-                HasSeenFlag = false;
-                TaskManager.Enqueue(VNavmesh_IPCSubscriber.Path_Stop);
-                TaskManager.Enqueue(MoveToClosestAetheryte);
-                return;
-            }
-
-            if (MapFlagPosition != null && MapFlagPosition.Value.DistanceToPlayer() > 150 && ShouldUseFlag)
-            {
-                AutoStatus = "Moving to farming area...";
-                TaskManager.Enqueue(MoveToFlag);
-                return;
-            }
-
-            if (DesiredNodeCoordsInZone.Any())
-            {
-                TaskManager.Enqueue(MoveToFarNode);
-                return;
-            }
+            
 
             AutoStatus = "Nothing to do...";
         }
