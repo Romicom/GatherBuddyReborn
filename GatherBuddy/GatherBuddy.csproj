@@ -86,10 +86,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="AutoGather\Tasks\" />
-	</ItemGroup>
-
-	<ItemGroup>
 	  <None Include="Plugin\AutoGather.cs" />
 	</ItemGroup>
 </Project>
