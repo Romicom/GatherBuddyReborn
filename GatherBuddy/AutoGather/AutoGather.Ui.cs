@@ -1,4 +1,4 @@
-﻿using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.Enums;
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using GatherBuddy.Plugin;
@@ -34,6 +34,16 @@ namespace GatherBuddy.AutoGather
                 GatherBuddy.AutoGather.Enabled = enabled;
             }
 
+            // Prioritization checkbox
+            var prioritizeClosest = GatherBuddy.Config.AutoGatherConfig.PrioritizeClosestNode;
+            if (ImGui.Checkbox("Prioritize Closest Node", ref prioritizeClosest))
+            {
+                GatherBuddy.Config.AutoGatherConfig.PrioritizeClosestNode = prioritizeClosest;
+                GatherBuddy.Config.Save();
+            }
+            ImGui.SameLine();
+            ImGuiComponents.HelpMarker("When enabled, will path to the closest node from your list instead of the first one");
+
             ImGui.Text($"Status: {GatherBuddy.AutoGather.AutoStatus}");
             var lastNavString = GatherBuddy.AutoGather.LastNavigationResult.HasValue
                 ? GatherBuddy.AutoGather.LastNavigationResult.Value
@@ -43,29 +53,46 @@ namespace GatherBuddy.AutoGather
             ImGui.Text($"Navigation: {lastNavString}");
         }
 
-
         public static void DrawDebugTables()
         {
             if (ImGui.Button("Import Node Offsets from Clipboard"))
             {
                 var settings = new JsonSerializerSettings();
-                var                          text    = ImGuiUtil.GetClipboardText();
-                var vectors = JsonConvert.DeserializeObject<List<OffsetPair>>(text, settings) ?? [];
-                foreach (var offset in vectors)
+                var text = ImGuiUtil.GetClipboardText();
+
+                try
                 {
-                    WorldData.NodeOffsets[offset.Original] = offset.Offset;
-                    GatherBuddy.Log.Information($"Added offset {offset} to dictionary");
+                    var vectors = JsonConvert.DeserializeObject<List<OffsetPair>>(text, settings) ?? [];
+                    foreach (var offset in vectors)
+                    {
+                        WorldData.NodeOffsets[offset.Original] = offset.Offset;
+                        GatherBuddy.Log.Information($"Added offset {offset} to dictionary");
+                    }
+                    WorldData.SaveOffsetsToFile();
+                    GatherBuddy.Log.Information("Import complete");
                 }
-                WorldData.SaveOffsetsToFile();
-                GatherBuddy.Log.Information("Import complete");
+                catch (Exception ex)
+                {
+                    GatherBuddy.Log.Error($"Failed to import node offsets: {ex.Message}");
+                    Communicator.PrintError("[GatherBuddyReborn] Failed to import node offsets. Check the clipboard content format.");
+                }
             }
             ImGui.SameLine();
             if (ImGui.Button("Export Node Offsets to Clipboard"))
             {
-                var settings = new JsonSerializerSettings();
-                var offsetString = JsonConvert.SerializeObject(WorldData.NodeOffsets.Select(x => new OffsetPair(x.Key, x.Value)).ToList(), Formatting.Indented, settings);
-                ImGui.SetClipboardText(offsetString);
-                GatherBuddy.Log.Information("Node offsets exported to clipboard");
+                try
+                {
+                    var settings = new JsonSerializerSettings();
+                    var offsetPairs = WorldData.NodeOffsets?.Select(x => new OffsetPair(x.Key, x.Value)).ToList() ?? new List<OffsetPair>();
+                    var offsetString = JsonConvert.SerializeObject(offsetPairs, Formatting.Indented, settings);
+                    ImGui.SetClipboardText(offsetString);
+                    GatherBuddy.Log.Information("Node offsets exported to clipboard");
+                }
+                catch (Exception ex)
+                {
+                    GatherBuddy.Log.Error($"Failed to export node offsets: {ex.Message}");
+                    Communicator.PrintError("[GatherBuddyReborn] Failed to export node offsets.");
+                }
             }
             // First column: Nearby nodes table
             if (ImGui.BeginTable("##nearbyNodesTable", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
@@ -79,9 +106,24 @@ namespace GatherBuddy.AutoGather
 
                 ImGui.TableHeadersRow();
 
+                if (Player.Object == null)
+                {
+                    ImGui.Text("Player not available");
+                    ImGui.EndTable();
+                    return;
+                }
+
                 var playerPosition = Player.Object.Position;
-                foreach (var node in Svc.Objects.Where(o => o.ObjectKind == ObjectKind.GatheringPoint)
-                             .OrderBy(o => Vector3.Distance(o.Position, playerPosition)))
+                var objectList = Svc.Objects?.Where(o => o != null && o.ObjectKind == ObjectKind.GatheringPoint);
+
+                if (objectList == null)
+                {
+                    ImGui.Text("No gathering points found");
+                    ImGui.EndTable();
+                    return;
+                }
+
+                foreach (var node in objectList.OrderBy(o => Vector3.Distance(o.Position, playerPosition)))
                 {
                     ImGui.TableNextRow();
                     ImGui.TableSetColumnIndex(0);
@@ -93,8 +135,8 @@ namespace GatherBuddy.AutoGather
                     ImGui.TableSetColumnIndex(3);
                     ImGui.Text(node.Position.ToString());
                     ImGui.TableSetColumnIndex(4);
-                    var distance = Vector3.Distance(Player.Object.Position, node.Position);
-                    ImGui.Text(distance.ToString());
+                    var distance = Vector3.Distance(playerPosition, node.Position);
+                    ImGui.Text(distance.ToString("F2"));
                     ImGui.TableSetColumnIndex(5);
 
                     var territoryId = Dalamud.ClientState.TerritoryType;
@@ -134,11 +176,12 @@ namespace GatherBuddy.AutoGather
                         if (GatherBuddy.AutoGather.Enabled)
                         {
                             Communicator.PrintError("[GatherBuddyReborn] Auto-Gather is enabled! Unable to navigate.");
-                            return;
                         }
-                        //VNavmesh_IPCSubscriber.Nav_PathfindCancelAll();
-                        VNavmesh_IPCSubscriber.Path_Stop();
-                        VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(node.Position, GatherBuddy.AutoGather.ShouldFly(node.Position));
+                        else
+                        {
+                            VNavmesh_IPCSubscriber.Path_Stop();
+                            VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(node.Position, GatherBuddy.AutoGather.ShouldFly(node.Position));
+                        }
                     }
 
                     if (WorldData.NodeOffsets.TryGetValue(node.Position, out var offset))
@@ -154,11 +197,12 @@ namespace GatherBuddy.AutoGather
                             if (GatherBuddy.AutoGather.Enabled)
                             {
                                 Communicator.PrintError("[GatherBuddyReborn] Auto-Gather is enabled! Unable to navigate.");
-                                return;
                             }
-                            //VNavmesh_IPCSubscriber.Nav_PathfindCancelAll();
-                            VNavmesh_IPCSubscriber.Path_Stop();
-                            VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(offset, GatherBuddy.AutoGather.ShouldFly(offset));
+                            else
+                            {
+                                VNavmesh_IPCSubscriber.Path_Stop();
+                                VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(offset, GatherBuddy.AutoGather.ShouldFly(offset));
+                            }
                         }
                     }
                     else
@@ -180,10 +224,17 @@ namespace GatherBuddy.AutoGather
         {
             ImGui.PushItemWidth(300);
             var ps = PlayerState.Instance();
-            var preview = Dalamud.GameData.GetExcelSheet<Mount>().First(x => x.RowId == GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId)
-                .Singular.ToString().ToProperCase();
-            if (string.IsNullOrEmpty(preview))
-                preview = "Mount Roulette";
+
+            // Fix potential null reference by using FirstOrDefault and checking for null
+            var mountSheet = Dalamud.GameData.GetExcelSheet<Mount>();
+            var selectedMount = mountSheet?.FirstOrDefault(x => x.RowId == GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId);
+
+            string preview = "Mount Roulette";
+            if (selectedMount != null && selectedMount.Singular != null)
+            {
+                preview = selectedMount.Singular.ToString().ToProperCase();
+            }
+
             if (ImGui.BeginCombo("Select Mount", preview))
             {
                 if (ImGui.Selectable("Mount Roulette", GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId == 0))
@@ -192,30 +243,31 @@ namespace GatherBuddy.AutoGather
                     GatherBuddy.Config.Save();
                 }
 
-                foreach (var mount in Dalamud.GameData.GetExcelSheet<Mount>().OrderBy(x => x.Singular.ToString().ToProperCase()))
+                if (mountSheet != null)
                 {
-                    if (ps->IsMountUnlocked(mount.RowId))
+                    foreach (var mount in mountSheet.OrderBy(x => x.Singular?.ToString().ToProperCase() ?? string.Empty))
                     {
-                        var selected = ImGui.Selectable(mount.Singular.ToString().ToProperCase(),
-                            GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId == mount.RowId);
-
-                        if (selected)
+                        if (mount.Singular != null && ps != null && ps->IsMountUnlocked(mount.RowId))
                         {
-                            GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId = mount.RowId;
-                            GatherBuddy.Config.Save();
+                            var selected = ImGui.Selectable(mount.Singular.ToString().ToProperCase(),
+                                GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId == mount.RowId);
+
+                            if (selected)
+                            {
+                                GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId = mount.RowId;
+                                GatherBuddy.Config.Save();
+                            }
                         }
                     }
                 }
 
                 ImGui.EndCombo();
             }
+
+            // Balance the PushItemWidth with a PopItemWidth
+            ImGui.PopItemWidth();
         }
 
-        /// <summary>
-        /// Extension method to convert the string to Proper Case.
-        /// </summary>
-        /// <param name="input">The string input.</param>
-        /// <returns>The string in Proper Case.</returns>
         public static string ToProperCase(this string input)
         {
             return System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(input.ToLower());
