@@ -1,4 +1,4 @@
-﻿using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Conditions;
 using ECommons.GameHelpers;
 using ECommons.Throttlers;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -19,68 +19,165 @@ namespace GatherBuddy.AutoGather
 {
     public partial class AutoGather
     {
+        private (IGameObject? Node, Gatherable? Item) _currentClosestNode;
+        private (IGameObject? Node, Gatherable? Item) _currentNode;
+
+        private (IGameObject? Node, Gatherable? Item) FindTargetNode()
+        {
+            return GatherBuddy.Config.AutoGatherConfig.PrioritizeClosestNode 
+                ? FindClosestNode() 
+                : FindFirstNode();
+        }
+
+        private (IGameObject? Node, Gatherable? Item) FindClosestNode()
+        {
+            IGameObject? closestNode = null;
+            Gatherable? closestItem = null;
+            float minDistance = float.MaxValue;
+
+            foreach (var item in _targetItem)
+            {
+                if (!GatherBuddy.GameData.GatherableToNode.TryGetValue(item, out var nodes))
+                    continue;
+
+                foreach (var node in nodes)
+                {
+                    var nodeObj = GameObjectHelper.GetClosestNode(node);
+                    if (nodeObj == null || !nodeObj.IsTargetable)
+                        continue;
+
+                    var distance = nodeObj.Position.DistanceToPlayer();
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        closestNode = nodeObj;
+                        closestItem = item;
+                    }
+                }
+            }
+            return (closestNode, closestItem);
+        }
+
+        private (IGameObject? Node, Gatherable? Item) FindFirstNode()
+        {
+            foreach (var item in _targetItem)
+            {
+                if (!GatherBuddy.GameData.GatherableToNode.TryGetValue(item, out var nodes))
+                    continue;
+
+                var nodeObj = GameObjectHelper.GetClosestNode(nodes.First());
+                if (nodeObj != null && nodeObj.IsTargetable)
+                    return (nodeObj, item);
+            }
+            return (null, null);
+        }
+
         private unsafe void EnqueueDismount()
         {
+            // First stop any ongoing navigation
             TaskManager.Enqueue(StopNavigation);
 
             var am = ActionManager.Instance();
-            TaskManager.Enqueue(() => { if (Dalamud.Conditions[ConditionFlag.Mounted]) am->UseAction(ActionType.Mount, 0); }, "Dismount");
 
+            // First dismount attempt
+            TaskManager.Enqueue(() => {
+                if (Dalamud.Conditions[ConditionFlag.Mounted])
+                    am->UseAction(ActionType.Mount, 0);
+            }, "Dismount");
+
+            // Wait until we're not in flight and can act
             TaskManager.Enqueue(() => !Dalamud.Conditions[ConditionFlag.InFlight] && CanAct, 1000, "Wait for not in flight");
-            TaskManager.Enqueue(() => { if (Dalamud.Conditions[ConditionFlag.Mounted]) am->UseAction(ActionType.Mount, 0); }, "Dismount 2");
+
+            // Second dismount attempt in case the first one failed
+            TaskManager.Enqueue(() => {
+                if (Dalamud.Conditions[ConditionFlag.Mounted])
+                    am->UseAction(ActionType.Mount, 0);
+            }, "Dismount 2");
+
+            // Wait until we're fully dismounted and can act
             TaskManager.Enqueue(() => !Dalamud.Conditions[ConditionFlag.Mounted] && CanAct, 1000, "Wait for dismount");
-            TaskManager.Enqueue(() => { if (!Dalamud.Conditions[ConditionFlag.Mounted]) TaskManager.DelayNextImmediate(500); } );//Prevent "Unable to execute command while jumping."
+
+            // Add a small delay after dismounting to ensure stability
+            TaskManager.Enqueue(() => {
+                if (!Dalamud.Conditions[ConditionFlag.Mounted])
+                    TaskManager.DelayNextImmediate(500);
+            });
         }
 
         private unsafe void EnqueueMountUp()
         {
+            // Don't try to mount if we're already mounted
+            if (Dalamud.Conditions[ConditionFlag.Mounted])
+                return;
+
             var am = ActionManager.Instance();
             var mount = GatherBuddy.Config.AutoGatherConfig.AutoGatherMountId;
             Action doMount;
 
+            // Try to use the configured mount if it's unlocked and available
             if (IsMountUnlocked(mount) && am->GetActionStatus(ActionType.Mount, mount) == 0)
             {
                 doMount = () => am->UseAction(ActionType.Mount, mount);
             }
             else
             {
+                // Fall back to the random mount action if the specific mount isn't available
                 if (am->GetActionStatus(ActionType.GeneralAction, 24) != 0)
                 {
+                    // If we can't mount at all, log a warning and return
+                    GatherBuddy.Log.Warning("Cannot mount up - mount action unavailable");
                     return;
                 }
 
                 doMount = () => am->UseAction(ActionType.GeneralAction, 24);
             }
 
+            // Stop any current navigation before mounting
             TaskManager.Enqueue(StopNavigation);
+
+            // Use the mount action with appropriate delay
             EnqueueActionWithDelay(doMount);
-            TaskManager.Enqueue(() => Svc.Condition[ConditionFlag.Mounted], 2000);
+
+            // Wait for the mounted status with a timeout
+            TaskManager.Enqueue(() => Svc.Condition[ConditionFlag.Mounted], 2000, "Wait for mount");
         }
 
         private unsafe bool IsMountUnlocked(uint mount)
         {
             var instance = PlayerState.Instance();
-            if (instance == null)
-                return false;
-
-            return instance->IsMountUnlocked(mount);
+            return instance != null && instance->IsMountUnlocked(mount);
         }
 
-        private void MoveToCloseNode(IGameObject gameObject, Gatherable targetItem, ConfigPreset config)
+        private void MoveToCloseNode(ConfigPreset config)
         {
-            var distance = gameObject.Position.DistanceToPlayer();
+            var targetNode = FindTargetNode();
+
+            // Store the target node in the appropriate variable
+            if (GatherBuddy.Config.AutoGatherConfig.PrioritizeClosestNode)
+                _currentClosestNode = targetNode;
+            else
+                _currentNode = targetNode;
+
+            // Get the current node based on the configuration
+            var (currentNode, currentItem) = GatherBuddy.Config.AutoGatherConfig.PrioritizeClosestNode
+                ? _currentClosestNode
+                : _currentNode;
+
+            // Return early if no valid node or item was found
+            if (currentNode == null || currentItem == null)
+                return;
+
+            var distance = currentNode.Position.DistanceToPlayer();
 
             if (distance < 3)
             {
-                var waitGP = targetItem.ItemData.IsCollectable && Player.Object.CurrentGp < config.CollectableMinGP;
-                waitGP |= !targetItem.ItemData.IsCollectable && Player.Object.CurrentGp < config.GatherableMinGP;
+                var waitGP = currentItem.ItemData.IsCollectable && Player.Object.CurrentGp < config.CollectableMinGP;
+                waitGP |= !currentItem.ItemData.IsCollectable && Player.Object.CurrentGp < config.GatherableMinGP;
 
                 if (Dalamud.Conditions[ConditionFlag.Mounted] && (waitGP || Dalamud.Conditions[ConditionFlag.InFlight] || GetConsumablesWithCastTime(config) > 0))
                 {
-                    //Try to dismount early. It would help with nodes where it is not possible to dismount at vnavmesh's provided floor point
                     EnqueueDismount();
                     TaskManager.Enqueue(() => {
-                        //If early dismount failed, navigate to the nearest floor point
                         if (Dalamud.Conditions[ConditionFlag.Mounted] && Dalamud.Conditions[ConditionFlag.InFlight] && !Dalamud.Conditions[ConditionFlag.Diving])
                         {
                             try
@@ -92,7 +189,6 @@ namespace GatherBuddy.AutoGather
                                 EnqueueDismount();
                             }
                             catch { }
-                            //If even that fails, do advanced unstuck
                             TaskManager.Enqueue(() => { if (Dalamud.Conditions[ConditionFlag.Mounted]) _advancedUnstuck.Force(); });
                         }
                     });
@@ -101,32 +197,48 @@ namespace GatherBuddy.AutoGather
                 {
                     StopNavigation();
                     AutoStatus = "Waiting for GP to regenerate...";
-                } 
+                }
                 else
                 {
-                    // Use consumables with cast time just before gathering a node when player is surely not mounted
-                    if (GetConsumablesWithCastTime(config) is var consumable and > 0)
+                    // Check if we need to use a consumable with cast time
+                    uint consumable = GetConsumablesWithCastTime(config);
+                    if (consumable > 0)
                     {
+                        // Stop navigation if we're moving
                         if (IsPathing)
+                        {
                             StopNavigation();
+                            // Add a small delay to ensure we've fully stopped
+                            TaskManager.DelayNext(200);
+                        }
                         else
-                            EnqueueActionWithDelay(() => UseItem(consumable));
+                        {
+                            // Use the consumable if we're not already casting something
+                            if (!Dalamud.Conditions[ConditionFlag.Casting] && !Dalamud.Conditions[ConditionFlag.Casting87])
+                            {
+                                EnqueueActionWithDelay(() => UseItem(consumable));
+                            }
+                        }
                     }
                     else
                     {
-                        EnqueueNodeInteraction(gameObject, targetItem);
-                        //The node could be behind a rock or a tree and not be interactable. This happened in the Endwalker, but seems not to be reproducible in the Dawntrail.
-                        //Enqueue navigation anyway, just in case.
+                        // No consumables needed, interact with the node
+                        EnqueueNodeInteraction();
+
+                        // If we're not underwater, navigate to the node if we're not already gathering
                         if (!Dalamud.Conditions[ConditionFlag.Diving])
                         {
-                            TaskManager.Enqueue(() => { if (!Dalamud.Conditions[ConditionFlag.Gathering]) Navigate(gameObject.Position, false); });
+                            TaskManager.Enqueue(() => {
+                                if (!Dalamud.Conditions[ConditionFlag.Gathering] && !Dalamud.Conditions[ConditionFlag.Gathering42])
+                                    Navigate(currentNode.Position, false);
+                            });
                         }
                     }
                 }
             }
             else if (distance < Math.Max(GatherBuddy.Config.AutoGatherConfig.MountUpDistance, 5) && !Dalamud.Conditions[ConditionFlag.Diving])
             {
-                Navigate(gameObject.Position, false);
+                Navigate(currentNode.Position, false);
             }
             else
             {
@@ -136,7 +248,7 @@ namespace GatherBuddy.AutoGather
                 }
                 else
                 {
-                    Navigate(gameObject.Position, ShouldFly(gameObject.Position));
+                    Navigate(currentNode.Position, ShouldFly(currentNode.Position));
                 }
             }
         }
@@ -147,12 +259,9 @@ namespace GatherBuddy.AutoGather
 
         private void StopNavigation()
         {
-            // Reset navigation logic here
-            // For example, reinitiate navigation to the destination
             CurrentDestination = default;
             if (VNavmesh_IPCSubscriber.IsEnabled)
             {
-                //VNavmesh_IPCSubscriber.Nav_PathfindCancelAll();
                 VNavmesh_IPCSubscriber.Path_Stop();
             }
             lastResetTime = DateTime.Now;
@@ -160,67 +269,88 @@ namespace GatherBuddy.AutoGather
 
         private void Navigate(Vector3 destination, bool shouldFly)
         {
+            // If we're already navigating to this destination, don't restart navigation
             if (CurrentDestination == destination && (IsPathing || IsPathGenerating))
                 return;
 
-            //vnavmesh can't find a path on mesh underwater (because the character is basically flying), nor can it fly without a mount.
-            //Ensure that you are always mounted when underwater.
+            // Safety check: don't try to navigate underwater without being mounted
             if (Dalamud.Conditions[ConditionFlag.Diving] && !Dalamud.Conditions[ConditionFlag.Mounted])
             {
-                GatherBuddy.Log.Error("BUG: Navigate() called underwater without mounting up first");
-                Enabled = false;
+                GatherBuddy.Log.Error("Navigate() called underwater without mounting up first");
+                // Instead of disabling the entire feature, try to mount up first
+                EnqueueMountUp();
+                // Store the destination for later use after mounting
+                CurrentDestination = destination;
                 return;
             }
 
+            // Always fly when underwater
             shouldFly |= Dalamud.Conditions[ConditionFlag.Diving];
 
+            // Stop any current navigation before starting a new one
             StopNavigation();
             CurrentDestination = destination;
+
+            // Get a corrected destination that's navigable
             var correctedDestination = GetCorrectedDestination(CurrentDestination);
             GatherBuddy.Log.Debug($"Navigating to {destination} (corrected to {correctedDestination})");
 
+            // Start the actual navigation
             LastNavigationResult = VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(correctedDestination, shouldFly);
         }
 
         private static Vector3 GetCorrectedDestination(Vector3 destination)
         {
+            // Start with the original destination
             var correctedDestination = destination;
+
+            // Check if we have a predefined offset for this node position
             if (WorldData.NodeOffsets.TryGetValue(destination, out var offset))
                 correctedDestination = offset;
 
             try
             {
-                correctedDestination = VNavmesh_IPCSubscriber.Query_Mesh_NearestPoint(correctedDestination, 3, 3);
-                if (Vector3.Distance(correctedDestination, destination) is var distance and > 3)
+                // Try to find the nearest navigable point on the mesh
+                var nearestPoint = VNavmesh_IPCSubscriber.Query_Mesh_NearestPoint(correctedDestination, 3, 3);
+
+                // Only use the corrected point if it's reasonably close to our target
+                if (Vector3.Distance(nearestPoint, destination) is var distance and <= 3)
                 {
-                    GatherBuddy.Log.Warning($"Offset is ignored, because distance {distance} is too large after correcting for mesh.");
+                    correctedDestination = nearestPoint;
+                }
+                else
+                {
+                    // If the offset took us too far, log a warning and try again with the original position
+                    GatherBuddy.Log.Warning($"Offset ignored (distance {distance} too large)");
                     correctedDestination = VNavmesh_IPCSubscriber.Query_Mesh_NearestPoint(destination, 3, 3);
                 }
             }
-            catch (Exception) { }
+            catch (Exception ex)
+            {
+                // If there's an error with the navmesh query, log it but continue with the uncorrected destination
+                GatherBuddy.Log.Error($"Error finding nearest point on navmesh: {ex.Message}");
+            }
 
             return correctedDestination;
         }
 
         private void MoveToFarNode(Vector3 position)
         {
-            var farNode = position;
-
             if (!Dalamud.Conditions[ConditionFlag.Mounted])
             {
                 EnqueueMountUp();
             }
             else
             {
-                Navigate(farNode, ShouldFly(farNode));
+                Navigate(position, ShouldFly(position));
             }
         }
 
         private bool MoveToTerritory(ILocation location)
         {
             var aetheryte = location.ClosestAetheryte;
-
             var territory = location.Territory;
+
             if (ForcedAetherytes.ZonesWithoutAetherytes.FirstOrDefault(x => x.ZoneId == territory.Id).AetheryteId is var alt && alt > 0)
                 territory = GatherBuddy.GameData.Aetherytes[alt].Territory;
 
@@ -231,9 +361,10 @@ namespace GatherBuddy.AutoGather
                     .OrderBy(a => a.WorldDistance(territory.Id, location.IntegralXCoord, location.IntegralYCoord))
                     .FirstOrDefault();
             }
+
             if (aetheryte == null)
             {
-                Communicator.PrintError("Couldn't find an attuned aetheryte to teleport to.");
+                Communicator.PrintError("No attuned aetheryte found");
                 return false;
             }
 
